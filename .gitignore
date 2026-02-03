@@ -1,0 +1,11 @@
+ComfyUI/
+venvs/
+
+# --- OpenWebUI secrets ---
+.webui_secret_key
+
+# macOS
+.DS_Store
+
+# Linux
+*.swp
