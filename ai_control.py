@@ -57,13 +57,28 @@ def process_running(keyword):
         return False
 
 
+# --- Ollama: Alle Modelle entladen ---
+def unload_all_ollama_models():
+    try:
+        requests.delete("http://127.0.0.1:11434/api/ps", timeout=0.5)
+    except:
+        pass
+
+
+# --- Ollama: Runner-Zombies killen ---
+def kill_ollama_runners():
+    subprocess.call(["pkill", "-f", "ollama runner"])
+
+
 class AIControl(Gtk.Window):
     def __init__(self):
         super().__init__(title="AI Control Panel")
         self.set_default_size(700, 500)
         self.set_size_request(700, 500)
 
-        self.processes = []
+        # getrennte Prozess-Handles
+        self.comfy_process = None
+        self.webui_process = None
 
         vbox = Gtk.VBox(spacing=6)
         self.add(vbox)
@@ -85,13 +100,23 @@ class AIControl(Gtk.Window):
         hbox = Gtk.HBox(spacing=6)
         vbox.pack_start(hbox, False, False, 0)
 
-        self.start_button = Gtk.Button(label="Start AI")
-        self.start_button.connect("clicked", self.start_ai)
-        hbox.pack_start(self.start_button, True, True, 0)
+        # ComfyUI Buttons
+        self.start_comfy = Gtk.Button(label="Start ComfyUI")
+        self.start_comfy.connect("clicked", self.start_comfyui)
+        hbox.pack_start(self.start_comfy, True, True, 0)
 
-        self.stop_button = Gtk.Button(label="Stop AI")
-        self.stop_button.connect("clicked", self.stop_ai)
-        hbox.pack_start(self.stop_button, True, True, 0)
+        self.stop_comfy = Gtk.Button(label="Stop ComfyUI")
+        self.stop_comfy.connect("clicked", self.stop_comfyui)
+        hbox.pack_start(self.stop_comfy, True, True, 0)
+
+        # OpenWebUI Buttons
+        self.start_webui = Gtk.Button(label="Start OpenWebUI")
+        self.start_webui.connect("clicked", self.start_openwebui)
+        hbox.pack_start(self.start_webui, True, True, 0)
+
+        self.stop_webui = Gtk.Button(label="Stop OpenWebUI")
+        self.stop_webui.connect("clicked", self.stop_openwebui)
+        hbox.pack_start(self.stop_webui, True, True, 0)
 
         # --- Terminal Output ---
         self.output = Gtk.TextView()
@@ -122,13 +147,11 @@ class AIControl(Gtk.Window):
     # --- LED-Update ---
     def update_status(self):
         comfy_running = comfy_api_ok()
-
         webui_running = (
             port_open(8080) or
             process_running("open-webui") or
             process_running("open_webui")
         )
-
         ollama_running = port_open(11434) or process_running("ollama serve")
 
         self.status_comfy.set_text(f"ComfyUI:   {'🟢 läuft' if comfy_running else '🔴 gestoppt'}")
@@ -137,49 +160,65 @@ class AIControl(Gtk.Window):
 
         return True
 
-    # --- Start ---
-    def start_ai(self, widget):
-        self.log("Starte Ollama...")
-        subprocess.call(["sudo", "systemctl", "start", "ollama"])
+    # --- Start ComfyUI ---
+    def start_comfyui(self, widget):
+        if self.comfy_process:
+            self.log("ComfyUI läuft bereits.")
+            return
 
         self.log("Starte ComfyUI...")
-        comfy = subprocess.Popen(
+        self.comfy_process = subprocess.Popen(
             ["bash", "-c",
-            "source ~/aitools/venvs/comfyui/bin/activate && python3 -u ~/aitools/ComfyUI/main.py --listen --enable-cors-header --verbose DEBUG --log-stdout"],
+             "source ~/aitools/venvs/comfyui/bin/activate && python3 -u ~/aitools/ComfyUI/main.py --listen --enable-cors-header --verbose DEBUG --log-stdout"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT
         )
-        self.processes.append(comfy)
-        threading.Thread(target=self.stream_output, args=(comfy,), daemon=True).start()
+        threading.Thread(target=self.stream_output, args=(self.comfy_process,), daemon=True).start()
 
-        self.log("Starte OpenWebUI (Launcher)...")
-        webui = subprocess.Popen(
-            ["bash", "-c",
-            "~/aitools/venvs/openwebui/bin/open-webui serve"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
-        self.processes.append(webui)
-        threading.Thread(target=self.stream_output, args=(webui,), daemon=True).start()
+    # --- Stop ComfyUI ---
+    def stop_comfyui(self, widget):
+        self.log("Stoppe ComfyUI...")
 
-        self.log("ComfyUI + OpenWebUI + Ollama laufen.")
-
-    # --- Stop ---
-    def stop_ai(self, widget):
-        self.log("Beende ComfyUI und OpenWebUI...")
-
-        for p in self.processes:
-            p.terminate()
-        self.processes.clear()
+        if self.comfy_process:
+            self.comfy_process.terminate()
+            self.comfy_process = None
 
         subprocess.call(["pkill", "-f", "ComfyUI/main.py"])
+        self.log("ComfyUI gestoppt.")
+
+    # --- Start OpenWebUI ---
+    def start_openwebui(self, widget):
+        if self.webui_process:
+            self.log("OpenWebUI läuft bereits.")
+            return
+
+        self.log("Starte OpenWebUI...")
+        self.webui_process = subprocess.Popen(
+            ["bash", "-c",
+             "~/aitools/venvs/openwebui/bin/open-webui serve"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        threading.Thread(target=self.stream_output, args=(self.webui_process,), daemon=True).start()
+
+    # --- Stop OpenWebUI ---
+    def stop_openwebui(self, widget):
+        self.log("Stoppe OpenWebUI...")
+
+        if self.webui_process:
+            self.webui_process.terminate()
+            self.webui_process = None
+
         subprocess.call(["pkill", "-f", "open_webui"])
         subprocess.call(["pkill", "-f", "open-webui"])
 
-        self.log("Stoppe Ollama...")
-        subprocess.call(["sudo", "systemctl", "stop", "ollama"])
+        self.log("OpenWebUI gestoppt.")
 
-        self.log("Alle Dienste gestoppt. VRAM ist frei.")
+        self.log("Entlade alle Ollama-Modelle...")
+        unload_all_ollama_models()
+
+        self.log("Entferne hängende Ollama-Runner...")
+        kill_ollama_runners()
 
 
 win = AIControl()
