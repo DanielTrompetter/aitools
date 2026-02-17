@@ -11,22 +11,6 @@ import threading
 import socket
 import requests
 
-
-# --- ComfyUI Cache Reset ---
-def reset_comfyui_cache():
-    cache_path = os.path.expanduser("~/.cache/comfyui")
-    if os.path.exists(cache_path):
-        try:
-            shutil.rmtree(cache_path)
-            print("ComfyUI Cache gelöscht.")
-        except Exception as e:
-            print(f"Fehler beim Löschen des ComfyUI Caches: {e}")
-    else:
-        print("ComfyUI Cache war bereits leer.")
-
-reset_comfyui_cache()
-
-
 # --- Portprüfung ---
 def port_open(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -115,6 +99,11 @@ class AIControl(Gtk.Window):
         self.stop_all.connect("clicked", self.stop_all_services)
         hbox.pack_start(self.stop_all, True, True, 0)
 
+        # --- NEW BUTTON: Clean Cache ---
+        self.clean_cache_btn = Gtk.Button(label="Clean Cache")
+        self.clean_cache_btn.connect("clicked", self.clean_cache)
+        hbox.pack_start(self.clean_cache_btn, True, True, 0)
+
         # --- Terminal Output ---
         self.output = Gtk.TextView()
         self.output.set_editable(False)
@@ -174,7 +163,7 @@ class AIControl(Gtk.Window):
         else:
             self.log("ComfyUI läuft bereits.")
 
-        # OpenWebUI (mit deaktivierter Resolution-Validierung)
+        # OpenWebUI
         if not self.webui_process:
             self.log("Starte OpenWebUI (Validation OFF)...")
             self.webui_process = subprocess.Popen(
@@ -217,6 +206,38 @@ class AIControl(Gtk.Window):
 
         self.log("Alle Services gestoppt.")
 
+
+    # --- NEW: Safe Clean Cache ---
+    def clean_cache(self, widget):
+        self.log("🧹 Leere OpenWebUI Cache (SAFE MODE)...")
+
+        data_dir = os.path.expanduser(
+            "~/aitools/venvs/openwebui/lib/python3.11/site-packages/open_webui/data"
+        )
+
+        # Nur Ordner, die KEINE User-Daten enthalten
+        safe_targets = [
+            "cache",
+            "uploads"
+        ]
+
+        for folder in safe_targets:
+            path = os.path.join(data_dir, folder)
+            if os.path.exists(path):
+                try:
+                    for item in os.listdir(path):
+                        item_path = os.path.join(path, item)
+                        if os.path.isfile(item_path):
+                            os.remove(item_path)
+                        else:
+                            shutil.rmtree(item_path)
+                    self.log(f"✔ {folder} geleert.")
+                except Exception as e:
+                    self.log(f"Fehler beim Löschen von {folder}: {e}")
+            else:
+                self.log(f"{folder} existiert nicht, übersprungen.")
+
+        self.log("🧹 SAFE Cleanup abgeschlossen (keine Accounts gelöscht).")
 
 
 win = AIControl()
